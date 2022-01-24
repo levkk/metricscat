@@ -4,6 +4,8 @@ A self-hosted metrics, logs and APM solution with a free license.
 
 ## Local development
 
+![Preview](preview.png)
+
 ### Requirements
 
 1. PostgreSQL 10 or higher,
