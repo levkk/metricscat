@@ -6,9 +6,9 @@ A self-hosted metrics, logs and APM solution with a free license.
 
 ### Requirements
 
-1. PostgreSQL 10 or higher
-2. [nvm](https://github.com/nvm-sh/nvm)
-3. Latest [Rust](https://rust-lang.org)
+1. PostgreSQL 10 or higher,
+2. [nvm](https://github.com/nvm-sh/nvm),
+3. Latest [Rust](https://rust-lang.org).
 
 ### Setup
 
@@ -24,8 +24,8 @@ This app consists of three components:
 
 In three different terminal tabs, run this individually:
 
-1. `cargo run agent`
-2. `cargo run server`
-3. `cd metricscat-frontend && nvm install && nvm use && npm start`
+1. `cargo run agent`,
+2. `cargo run server`,
+3. `cd metricscat-frontend && nvm install && nvm use && npm start`.
 
 You should see the metrics appear in your browser!
