@@ -4,7 +4,7 @@ A self-hosted metrics, logs and APM solution with a free license.
 
 ## Local development
 
-![Preview](preview.png)
+This will help you setup Metrics Cat locally!
 
 ### Requirements
 
@@ -31,3 +31,5 @@ In three different terminal tabs, run this individually:
 3. `cd metricscat-frontend && nvm install && nvm use && npm start`.
 
 You should see the metrics appear in your browser!
+
+![Preview](preview.png)
