@@ -6,6 +6,7 @@ extern crate serde_json;
 
 extern crate async_std;
 extern crate gethostname;
+extern crate rocket_cors;
 
 mod agent;
 mod server;
@@ -32,6 +33,11 @@ async fn main() {
                 )
                 .await
                 .unwrap();
+            let cors = rocket_cors::CorsOptions {
+                ..Default::default()
+            }
+            .to_cors()
+            .unwrap();
 
             match rocket::build()
                 .mount(
@@ -43,6 +49,7 @@ async fn main() {
                     ],
                 )
                 .manage(db)
+                .attach(cors)
                 .ignite()
                 .await
             {

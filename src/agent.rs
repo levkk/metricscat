@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 // System metrics
-use sysinfo::SystemExt;
+use sysinfo::{ProcessorExt, SystemExt};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Metric {
@@ -55,6 +55,16 @@ pub async fn launch() {
                 Metric {
                     name: "system.mem.used".to_string(),
                     value: system.used_memory() as f64,
+                    tags: tags.clone(),
+                },
+                Metric {
+                    name: "system.cpu.utilization".to_string(),
+                    value: system
+                        .processors()
+                        .iter()
+                        .map(|cpu| cpu.cpu_usage() as f64)
+                        .sum::<f64>()
+                        / system.processors().len() as f64,
                     tags: tags.clone(),
                 },
             ];
