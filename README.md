@@ -8,7 +8,7 @@ A self-hosted metrics, logs and APM solution with a free license.
 
 1. PostgreSQL 10 or higher
 2. [nvm](https://github.com/nvm-sh/nvm)
-3. Latest [Rust] (https://rust-lang.org)
+3. Latest [Rust](https://rust-lang.org)
 
 ### Setup
 
