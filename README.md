@@ -10,7 +10,7 @@ This will help you setup Metrics Cat locally!
 
 1. PostgreSQL 10 or higher,
 2. [nvm](https://github.com/nvm-sh/nvm),
-3. Latest [Rust](https://rust-lang.org).
+3. latest [Rust](https://rust-lang.org).
 
 ### Setup
 
