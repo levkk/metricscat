@@ -1,5 +1,10 @@
-.App {
-  text-align: center;
+table, th, td {
+  border: 1px solid grey;
+}
+
+td {
+  padding-left: 15px;
+  padding-right: 15px;
 }
 
 .App-logo {

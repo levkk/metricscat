@@ -45,7 +45,9 @@ async fn main() {
                     routes![
                         server::index,
                         server::api_metrics_post,
-                        server::api_metrics_get
+                        server::api_metrics_get,
+                        server::api_logs_post,
+                        server::api_logs_get,
                     ],
                 )
                 .manage(db)
