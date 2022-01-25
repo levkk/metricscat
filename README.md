@@ -28,7 +28,7 @@ In three different terminal tabs, run this individually:
 
 1. `cargo run server`,
 2. `cargo run agent`,
-3. `cd metricscat-frontend && nvm install && nvm use && npm start`.
+3. `cd metricscat-frontend && nvm install && nvm use && npm install && npm start`.
 
 You should see the metrics appear in your browser!
 
