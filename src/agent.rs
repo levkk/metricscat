@@ -146,6 +146,14 @@ pub async fn launch() {
 
     for log_file in log_files {
         let log_lines = log_lines.clone();
+        let hostname = gethostname::gethostname();
+        let tags = HashMap::from([
+            ("filename".to_string(), log_file.to_string()),
+            (
+                "hostname".to_string(),
+                hostname.into_string().unwrap_or("unknown".to_string()),
+            ),
+        ]);
 
         tokio::task::spawn(async move {
             let mut offset = 0u64;
@@ -202,7 +210,7 @@ pub async fn launch() {
                                 }
 
                                 // Maybe publish logs if we have enough of them.
-                                process_logs(&log_lines, &multi_line, &log_file).await;
+                                process_logs(&log_lines, &multi_line, &tags).await;
 
                                 // Clear multiline buffer and push in next line.
                                 multi_line.clear();
@@ -212,7 +220,7 @@ pub async fn launch() {
                                 last_modified = Some(modified);
                             } else {
                                 // Reached end of file, push whatever we have in the multiline buffer into the queue.
-                                process_logs(&log_lines, &multi_line, &log_file).await;
+                                process_logs(&log_lines, &multi_line, &tags).await;
 
                                 match last_modified {
                                     Some(timestamp) => {
@@ -250,7 +258,7 @@ pub async fn launch() {
 async fn process_logs(
     log_lines: &std::sync::Arc<tokio::sync::Mutex<Vec<LogLine>>>,
     multi_line: &String,
-    log_file: &str,
+    tags: &HashMap<String, String>,
 ) {
     // Push log line into publish queue.
     let mut guard = log_lines.lock().await;
@@ -260,7 +268,7 @@ async fn process_logs(
             line: multi_line.clone(),
             level: None,      // TODO: parse log level
             created_at: None, // TODO: parse timestamps
-            tags: HashMap::from([("filename".to_string(), log_file.to_string())]),
+            tags: tags.clone(),
         });
     }
 
