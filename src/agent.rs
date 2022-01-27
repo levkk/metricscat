@@ -107,7 +107,7 @@ pub async fn launch() {
             ];
 
             tokio::task::spawn(async move {
-                _ = send_metrics(metrics).await;
+                let _ = send_metrics(metrics).await;
             });
         }
     });
@@ -137,7 +137,7 @@ pub async fn launch() {
             drop(guard);
 
             if log_lines.len() > 0 {
-                _ = send_logs(&log_lines).await;
+                let _ = send_logs(&log_lines).await;
             }
 
             tokio::time::sleep(duration).await;
@@ -281,7 +281,7 @@ async fn process_logs(
         drop(guard);
 
         tokio::task::spawn(async move {
-            _ = send_logs(&copy).await;
+            let _ = send_logs(&copy).await;
         });
     } else {
         drop(guard);
@@ -299,7 +299,7 @@ async fn process_metric(buf: Vec<u8>) {
             let name = name.to_string();
             let value = value.parse::<f64>().unwrap_or(0.0);
 
-            _ = send_metrics(vec![Metric {
+            let _ = send_metrics(vec![Metric {
                 name: name,
                 value: value,
                 tags: HashMap::new(),
