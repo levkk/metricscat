@@ -279,48 +279,45 @@ pub async fn api_logs_post(log_lines: Json<Vec<agent::LogLine>>, pool: &State<Pg
         return;
     }
 
-    // Grab the lines.
+    // Grab the lines
+    let mut c = 1;
     let lines: Vec<_> = log_lines
         .iter()
-        .map(|x| x.line.trim_end().to_string())
+        .map(|x| {
+            let parts: Vec<_> = x
+                .line
+                .trim_end()
+                .split_whitespace()
+                .map(|x| x.to_string())
+                .collect();
+            let separators: Vec<_> = parts.iter().map(|_x| " ".to_string()).collect();
+            let query_part = format!("(${}, ${}, TIMEZONE('UTC', NOW()))", c, c + 1,);
+
+            c += 2;
+
+            (parts, separators, query_part)
+        })
         .collect();
 
-    // Put everything into one query for performance.
-
-    let (mut log_parts, mut separator_parts, mut query_parts) =
-        (Vec::new(), Vec::new(), Vec::new());
-
-    // Counts the Pg placeholders, e.g. $1, $2, etc.
-    let mut c = 1;
-    for (idx, line) in lines.iter().enumerate() {
-        // TODO: implement various tokenizers
-        let parts: Vec<_> = line.split_whitespace().collect();
-        let separators: Vec<_> = parts.iter().map(|_x| " ".to_string()).collect();
-
-        log_parts.push(parts);
-        separator_parts.push(separators);
-        query_parts.push(format!(
-            "(${}, ${}, TIMEZONE('UTC', NOW()))",
-            idx + c,
-            idx + c + 1
-        ));
-
-        c += 1;
-    }
-
     // Build the query from query_parts
+    let v = lines
+        .iter()
+        .map(|x| x.2.clone())
+        .collect::<Vec<String>>()
+        .join(", ");
     let q = format!(
         "INSERT INTO logs (log_parts, separators, created_at) VALUES {} RETURNING id",
-        query_parts.join(", ")
+        v
     );
+
     let mut query = sqlx::query_as(&q);
 
-    for (idx, lp) in log_parts.iter().enumerate() {
+    for line in lines {
         query = query
             // log_parts
-            .bind(lp)
+            .bind(line.0)
             // separators
-            .bind(separator_parts[idx].clone());
+            .bind(line.1);
     }
 
     // Execute this

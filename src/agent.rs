@@ -171,7 +171,7 @@ pub async fn launch() {
 
                                 guard.deref_mut().push(LogLine {
                                     line: line,
-                                    level: None, // TODO: parse log level
+                                    level: None,      // TODO: parse log level
                                     created_at: None, // TODO: parse timestamps
                                     tags: HashMap::from([(
                                         "filename".to_string(),
