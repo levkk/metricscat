@@ -48,6 +48,7 @@ async fn main() {
                         server::api_metrics_get,
                         server::api_logs_post,
                         server::api_logs_get,
+                        server::api_logs_search_get,
                     ],
                 )
                 .manage(db)

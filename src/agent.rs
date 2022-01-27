@@ -2,6 +2,7 @@
 
 use async_std::prelude::*;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 // System metrics
 use sysinfo::{ProcessorExt, SystemExt};
@@ -103,9 +104,36 @@ pub async fn launch() {
     let log_files = vec![
         "/var/log/postgresql/postgresql-12-main.log",
         "/some/random/file.log",
+        "/var/log/dpkg.log",
     ];
 
+    let log_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let s_log_lines = std::sync::Arc::clone(&log_lines);
+
+    // If the log stream is too slow, send the logs at least once a second.
+    tokio::task::spawn(async move {
+        loop {
+            let duration = tokio::time::Duration::from_millis(1_000);
+            let mut guard = s_log_lines.lock().await;
+            let log_lines = guard.deref().clone();
+
+            // Clear buffer.
+            guard.deref_mut().clear();
+
+            // Drop mutex as quickly as possible.
+            drop(guard);
+
+            if log_lines.len() > 0 {
+                send_logs(&log_lines).await;
+            }
+
+            tokio::time::sleep(duration).await;
+        }
+    });
+
     for log_file in log_files {
+        let log_lines = log_lines.clone();
+
         tokio::task::spawn(async move {
             let mut offset = 0u64;
             let mut last_modified: Option<std::time::SystemTime> = None;
@@ -138,18 +166,34 @@ pub async fn launch() {
                             };
 
                             if n != 0 {
-                                tokio::task::spawn(async move {
-                                    send_logs(&vec![LogLine {
-                                        line: line,
-                                        level: None,
-                                        created_at: None,
-                                        tags: HashMap::from([(
-                                            "filename".to_string(),
-                                            log_file.to_string(),
-                                        )]),
-                                    }])
-                                    .await;
+                                // Push log line into publish queue.
+                                let mut guard = log_lines.lock().await;
+
+                                guard.deref_mut().push(LogLine {
+                                    line: line,
+                                    level: None, // TODO: parse log level
+                                    created_at: None, // TODO: parse timestamps
+                                    tags: HashMap::from([(
+                                        "filename".to_string(),
+                                        log_file.to_string(),
+                                    )]),
                                 });
+
+                                // Don't let the queue get too long.
+                                if guard.len() >= 5 {
+                                    let copy = guard.deref().clone();
+                                    guard.deref_mut().clear();
+
+                                    // Drop mutex as quickly as possible.
+                                    drop(guard);
+
+                                    tokio::task::spawn(async move {
+                                        send_logs(&copy).await;
+                                    });
+                                } else {
+                                    drop(guard);
+                                }
+
                                 offset += n as u64;
 
                                 // File appended to

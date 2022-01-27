@@ -21,6 +21,8 @@ class App extends React.Component {
     logs: [],
     logsOffset: null,
     interval: 0,
+    searchTerm: "",
+    searchDate: "",
   }
 
   fetchData = () => {
@@ -34,6 +36,10 @@ class App extends React.Component {
 
     let offset = this.state.logsOffset ? `offset=${this.state.logsOffset}` : "";
 
+    if (this.state.searchTerm) {
+      return;
+    }
+
     fetch(`http://localhost:8000/api/logs?${offset}`)
     .then((response) => response.json())
     .then((data) => {
@@ -41,9 +47,25 @@ class App extends React.Component {
         let offset = data[0].offset;
         let last_logs = this.state.logs.slice(0, Math.min(this.state.logs.length, 25));
         let logs = data.concat(last_logs);
-        this.setState({ logs: logs, logsOffset: offset });
+        this.setState({ logs: logs, logsOffset: offset, searchDate: "" });
       }
     });
+  }
+
+  searchLogs = (event) => {
+    fetch(`http://localhost:8000/api/logs/search?term=${this.state.searchTerm}&created_at=${this.state.searchDate}`)
+    .then((response) => response.json())
+    .then((data) => {
+      this.setState({ logs: data, logsOffset: null });
+    })
+  }
+
+  updateInput = (name) => {
+    return function(event) {
+      this.setState({
+        [name]: event.target.value,
+      })
+    }.bind(this);
   }
 
   componentDidMount() {
@@ -77,6 +99,12 @@ class App extends React.Component {
         </LineChart>
 
         <h2>Logs (live)</h2>
+        <label>Term</label><br />
+        <input type="text" value={this.state.searchTerm} onChange={this.updateInput("searchTerm")} /> <br />
+        <label>Date</label> <br />
+        <input type="text" value={this.state.searchDate} onChange={this.updateInput("searchDate")} />
+        <button onClick={this.searchLogs}>Search</button>
+        <br />
         <table>
           <thead>
             <tr>

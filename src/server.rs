@@ -275,23 +275,64 @@ pub async fn api_metrics_get(
 
 #[post("/api/logs", data = "<log_lines>")]
 pub async fn api_logs_post(log_lines: Json<Vec<agent::LogLine>>, pool: &State<PgPool>) {
-    let lines: Vec<_> = log_lines.iter().map(|x| x.line.clone()).collect();
+    if log_lines.len() == 0 {
+        return;
+    }
 
-    let _rows: Vec<(i64,)> = sqlx::query_as(
-        "INSERT INTO logs (log_line, created_at) SELECT unnest($1), NOW() RETURNING id",
-    )
-    .bind(&lines)
-    .fetch_all(pool.inner())
-    .await
-    .unwrap();
+    // Grab the lines.
+    let lines: Vec<_> = log_lines
+        .iter()
+        .map(|x| x.line.trim_end().to_string())
+        .collect();
+
+    // Put everything into one query for performance.
+
+    let (mut log_parts, mut separator_parts, mut query_parts) =
+        (Vec::new(), Vec::new(), Vec::new());
+
+    // Counts the Pg placeholders, e.g. $1, $2, etc.
+    let mut c = 1;
+    for (idx, line) in lines.iter().enumerate() {
+        // TODO: implement various tokenizers
+        let parts: Vec<_> = line.split_whitespace().collect();
+        let separators: Vec<_> = parts.iter().map(|_x| " ".to_string()).collect();
+
+        log_parts.push(parts);
+        separator_parts.push(separators);
+        query_parts.push(format!(
+            "(${}, ${}, TIMEZONE('UTC', NOW()))",
+            idx + c,
+            idx + c + 1
+        ));
+
+        c += 1;
+    }
+
+    // Build the query from query_parts
+    let q = format!(
+        "INSERT INTO logs (log_parts, separators, created_at) VALUES {} RETURNING id",
+        query_parts.join(", ")
+    );
+    let mut query = sqlx::query_as(&q);
+
+    for (idx, lp) in log_parts.iter().enumerate() {
+        query = query
+            // log_parts
+            .bind(lp)
+            // separators
+            .bind(separator_parts[idx].clone());
+    }
+
+    // Execute this
+    let _rows: Vec<(i64,)> = query.fetch_all(pool.inner()).await.unwrap();
 }
 
 #[get("/api/logs?<offset>")]
 pub async fn api_logs_get(offset: Option<i64>, pool: &State<PgPool>) -> Json<Vec<LogLine>> {
     let offset = offset.unwrap_or(0);
 
-    let rows: Vec<(i64, String, chrono::naive::NaiveDateTime)> = sqlx::query_as(
-        "SELECT id, log_line, created_at FROM logs WHERE id > $1 ORDER BY id DESC LIMIT 25",
+    let rows: Vec<(i64, Vec<String>, Vec<String>, chrono::naive::NaiveDateTime)> = sqlx::query_as(
+        "SELECT id, log_parts, separators, created_at FROM logs WHERE id > $1 ORDER BY id DESC LIMIT 25",
     )
     .bind(offset)
     .fetch_all(pool.inner())
@@ -300,10 +341,74 @@ pub async fn api_logs_get(offset: Option<i64>, pool: &State<PgPool>) -> Json<Vec
 
     let result: Vec<LogLine> = rows
         .iter()
-        .map(|x| LogLine {
-            line: x.1.clone(),
-            recorded_at: x.2.to_string(),
-            offset: x.0,
+        .map(|x| {
+            let mut line = String::new();
+
+            for (idx, part) in x.1.iter().enumerate() {
+                let sep = x.2.get(idx).unwrap_or(&"".to_string()).clone();
+                line += &(part.clone() + &sep);
+            }
+
+            LogLine {
+                line: line,
+                recorded_at: x.3.to_string(),
+                offset: x.0,
+            }
+        })
+        .collect();
+
+    Json(result)
+}
+
+#[get("/api/logs/search?<term>&<created_at>")]
+pub async fn api_logs_search_get(
+    term: String,
+    created_at: Option<String>,
+    pool: &State<PgPool>,
+) -> Json<Vec<LogLine>> {
+    let now = chrono::offset::Utc::now().naive_utc();
+
+    let created_at = match created_at {
+        Some(created_at) => {
+            chrono::naive::NaiveDateTime::parse_from_str(&created_at, "%Y-%m-%dT%H:%M:%S")
+                .unwrap_or(now)
+        }
+        None => now,
+    };
+
+    // TODO: implement various tokenizers
+    let term: Vec<_> = term.split_whitespace().collect();
+
+    let rows: Vec<(i64, Vec<String>, Vec<String>, chrono::naive::NaiveDateTime)> = sqlx::query_as(
+        "SELECT id, log_parts, separators, created_at
+        FROM logs
+        WHERE log_parts @> $1::VARCHAR[]
+        AND created_at < $2
+        AND created_at > $2 - INTERVAL '5 minute'
+        ORDER BY created_at
+        LIMIT 100",
+    )
+    .bind(&term)
+    .bind(created_at)
+    .fetch_all(pool.inner())
+    .await
+    .unwrap();
+
+    let result: Vec<_> = rows
+        .iter()
+        .map(|x| {
+            let mut line = String::new();
+
+            for (idx, part) in x.1.iter().enumerate() {
+                let sep = x.2.get(idx).unwrap_or(&"".to_string()).clone();
+                line += &(part.clone() + &sep);
+            }
+
+            LogLine {
+                line: line,
+                recorded_at: x.3.to_string(),
+                offset: x.0,
+            }
         })
         .collect();
 
