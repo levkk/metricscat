@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/levkk/metricscat/tree/main.svg?style=svg)](https://circleci.com/gh/levkk/metricscat/tree/main)
+
 # Metrics Cat
 
 A self-hosted metrics, logs and APM solution with a free license.
