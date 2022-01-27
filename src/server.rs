@@ -48,6 +48,10 @@ pub fn index() -> &'static str {
 #[post("/api/metrics", data = "<metrics>")]
 pub async fn api_metrics_post(metrics: Json<Vec<agent::Metric>>, pool: &State<PgPool>) {
     let names: Vec<_> = metrics.iter().map(|x| x.name.clone()).collect();
+
+    // Start DB transaction
+    let transaction = pool.inner().begin().await.unwrap();
+
     let rows: Vec<(i64, String)> = sqlx::query_as(
         "SELECT id, name 
         	FROM metric_names 
@@ -188,6 +192,8 @@ pub async fn api_metrics_post(metrics: Json<Vec<agent::Metric>>, pool: &State<Pg
     .fetch_all(pool.inner())
     .await
     .unwrap();
+
+    transaction.commit().await.unwrap();
 }
 
 #[get("/api/metrics?<name>&<interval>&<range_start>&<range_end>&<function>")]
@@ -284,13 +290,7 @@ pub async fn api_logs_post(log_lines: Json<Vec<agent::LogLine>>, pool: &State<Pg
     let lines: Vec<_> = log_lines
         .iter()
         .map(|x| {
-            let parts: Vec<_> = x
-                .line
-                .trim_end()
-                .split_whitespace()
-                .map(|x| x.to_string())
-                .collect();
-            let separators: Vec<_> = parts.iter().map(|_x| " ".to_string()).collect();
+            let (parts, separators) = x.tokenize();
             let query_part = format!("(${}, ${}, TIMEZONE('UTC', NOW()))", c, c + 1,);
 
             c += 2;

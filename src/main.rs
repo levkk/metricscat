@@ -6,6 +6,7 @@ extern crate serde_json;
 
 extern crate async_std;
 extern crate gethostname;
+extern crate regex;
 extern crate rocket_cors;
 
 mod agent;

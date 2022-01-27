@@ -32,6 +32,19 @@ pub struct LogLine {
     pub tags: HashMap<String, String>,
 }
 
+impl LogLine {
+    pub fn tokenize(&self) -> (Vec<String>, Vec<String>) {
+        let parts: Vec<String> = self
+            .line
+            .split_whitespace()
+            .map(|x| x.to_string())
+            .collect();
+        let separators: Vec<String> = parts.iter().map(|_x| " ".to_string()).collect();
+
+        (parts, separators)
+    }
+}
+
 pub async fn launch() {
     // Custom metrics collector
     let custom_metrics = tokio::task::spawn(async move {
@@ -94,7 +107,7 @@ pub async fn launch() {
             ];
 
             tokio::task::spawn(async move {
-                send_metrics(metrics).await;
+                _ = send_metrics(metrics).await;
             });
         }
     });
@@ -104,7 +117,7 @@ pub async fn launch() {
     let log_files = vec![
         "/var/log/postgresql/postgresql-12-main.log",
         "/some/random/file.log",
-        "/var/log/dpkg.log",
+        // "/var/log/dpkg.log",
     ];
 
     let log_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -124,7 +137,7 @@ pub async fn launch() {
             drop(guard);
 
             if log_lines.len() > 0 {
-                send_logs(&log_lines).await;
+                _ = send_logs(&log_lines).await;
             }
 
             tokio::time::sleep(duration).await;
@@ -141,6 +154,9 @@ pub async fn launch() {
 
             println!("Starting collection of logs from {}", log_file);
 
+            // Multi-line detector.
+            let regex = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}.*").unwrap();
+
             loop {
                 match async_std::fs::File::open(log_file).await {
                     Ok(f) => {
@@ -155,8 +171,11 @@ pub async fn launch() {
                             }
                         };
 
+                        let mut multi_line = String::new();
+
                         loop {
                             let mut line = String::new();
+
                             let n = match buf.read_line(&mut line).await {
                                 Ok(n) => n,
                                 Err(err) => {
@@ -166,39 +185,35 @@ pub async fn launch() {
                             };
 
                             if n != 0 {
-                                // Push log line into publish queue.
-                                let mut guard = log_lines.lock().await;
+                                // Move how far we read in the file.
+                                offset += n as u64;
 
-                                guard.deref_mut().push(LogLine {
-                                    line: line,
-                                    level: None,      // TODO: parse log level
-                                    created_at: None, // TODO: parse timestamps
-                                    tags: HashMap::from([(
-                                        "filename".to_string(),
-                                        log_file.to_string(),
-                                    )]),
-                                });
-
-                                // Don't let the queue get too long.
-                                if guard.len() >= 5 {
-                                    let copy = guard.deref().clone();
-                                    guard.deref_mut().clear();
-
-                                    // Drop mutex as quickly as possible.
-                                    drop(guard);
-
-                                    tokio::task::spawn(async move {
-                                        send_logs(&copy).await;
-                                    });
-                                } else {
-                                    drop(guard);
+                                if multi_line.len() == 0 {
+                                    multi_line.push_str(&line);
+                                    // Don't check regex if it's the first line we are seeing,
+                                    // we don't know if another part of the multi-line is coming next.
+                                    continue;
                                 }
 
-                                offset += n as u64;
+                                if !regex.is_match(&line) {
+                                    // Keep buffering multi-line statement.
+                                    multi_line.push_str(&line);
+                                    continue;
+                                }
+
+                                // Maybe publish logs if we have enough of them.
+                                process_logs(&log_lines, &multi_line, &log_file).await;
+
+                                // Clear multiline buffer and push in next line.
+                                multi_line.clear();
+                                multi_line.push_str(&line);
 
                                 // File appended to
                                 last_modified = Some(modified);
                             } else {
+                                // Reached end of file, push whatever we have in the multiline buffer into the queue.
+                                process_logs(&log_lines, &multi_line, &log_file).await;
+
                                 match last_modified {
                                     Some(timestamp) => {
                                         if timestamp < modified {
@@ -232,6 +247,39 @@ pub async fn launch() {
     system_metrics.await.unwrap();
 }
 
+async fn process_logs(
+    log_lines: &std::sync::Arc<tokio::sync::Mutex<Vec<LogLine>>>,
+    multi_line: &String,
+    log_file: &str,
+) {
+    // Push log line into publish queue.
+    let mut guard = log_lines.lock().await;
+
+    if multi_line.len() > 0 {
+        guard.deref_mut().push(LogLine {
+            line: multi_line.clone(),
+            level: None,      // TODO: parse log level
+            created_at: None, // TODO: parse timestamps
+            tags: HashMap::from([("filename".to_string(), log_file.to_string())]),
+        });
+    }
+
+    // Don't let the queue get too long.
+    if guard.len() >= 5 {
+        let copy = guard.deref().clone();
+        guard.deref_mut().clear();
+
+        // Drop mutex as quickly as possible.
+        drop(guard);
+
+        tokio::task::spawn(async move {
+            _ = send_logs(&copy).await;
+        });
+    } else {
+        drop(guard);
+    }
+}
+
 async fn process_metric(buf: Vec<u8>) {
     let custom_metric = String::from_utf8_lossy(&buf).trim().to_string();
 
@@ -243,7 +291,7 @@ async fn process_metric(buf: Vec<u8>) {
             let name = name.to_string();
             let value = value.parse::<f64>().unwrap_or(0.0);
 
-            send_metrics(vec![Metric {
+            _ = send_metrics(vec![Metric {
                 name: name,
                 value: value,
                 tags: HashMap::new(),
@@ -254,81 +302,106 @@ async fn process_metric(buf: Vec<u8>) {
     };
 }
 
-async fn send_metrics(metrics: Vec<Metric>) {
-    let api =
-        std::env::var("METRICSCAT_API_URL").unwrap_or("http://localhost:8000/api".to_string());
-    let client = reqwest::Client::new();
-    //
-    // FIXME: Add suport for mTLS later.
-    //
-    // let client = match api.starts_with("https") {
-    //     // Implementing mTLS. So far this is not working, not sure why,
-    //     // I think something to do with the certificate being incorrectly formatted.
-    //     true => {
-    //         let cert_path =
-    //             std::env::var("METRICSCAT_CERTIFICATE_PATH").unwrap_or("firefox.pem".to_string());
-    //         match async_std::fs::File::open(&cert_path).await {
-    //             Ok(mut f) => {
-    //                 let mut buf = Vec::new();
-    //                 f.read_to_end(&mut buf).await.unwrap();
-    //                 match reqwest::Identity::from_pem(&buf) {
-    //                     Ok(identity) => reqwest::ClientBuilder::new()
-    //                         .identity(identity)
-    //                         .build()
-    //                         .unwrap_or(reqwest::Client::new()),
-    //                     Err(err) => {
-    //                         println!("Certificate is corrupt: {}", err);
-    //                         reqwest::Client::new()
-    //                     }
-    //                 }
-    //             }
-    //             Err(err) => {
-    //                 println!("Could not open certificate path: {}", err);
-    //                 reqwest::Client::new()
-    //             }
-    //         }
-    //     }
+async fn send_metrics(metrics: Vec<Metric>) -> reqwest::Result<()> {
+    let mut error = String::new();
 
-    //     // Basic HTTP, use inside a private network only.
-    //     false => reqwest::Client::new(),
-    // };
+    for _ in 0..3 {
+        let api =
+            std::env::var("METRICSCAT_API_URL").unwrap_or("http://localhost:8000/api".to_string());
+        let client = reqwest::Client::new();
+        let duration = tokio::time::Duration::from_millis(1_000);
+        //
+        // FIXME: Add suport for mTLS later.
+        //
+        // let client = match api.starts_with("https") {
+        //     // Implementing mTLS. So far this is not working, not sure why,
+        //     // I think something to do with the certificate being incorrectly formatted.
+        //     true => {
+        //         let cert_path =
+        //             std::env::var("METRICSCAT_CERTIFICATE_PATH").unwrap_or("firefox.pem".to_string());
+        //         match async_std::fs::File::open(&cert_path).await {
+        //             Ok(mut f) => {
+        //                 let mut buf = Vec::new();
+        //                 f.read_to_end(&mut buf).await.unwrap();
+        //                 match reqwest::Identity::from_pem(&buf) {
+        //                     Ok(identity) => reqwest::ClientBuilder::new()
+        //                         .identity(identity)
+        //                         .build()
+        //                         .unwrap_or(reqwest::Client::new()),
+        //                     Err(err) => {
+        //                         println!("Certificate is corrupt: {}", err);
+        //                         reqwest::Client::new()
+        //                     }
+        //                 }
+        //             }
+        //             Err(err) => {
+        //                 println!("Could not open certificate path: {}", err);
+        //                 reqwest::Client::new()
+        //             }
+        //         }
+        //     }
 
-    let url = format!("{}/metrics", api);
+        //     // Basic HTTP, use inside a private network only.
+        //     false => reqwest::Client::new(),
+        // };
 
-    let response = client
-        .post(&url)
-        .body(json!(metrics).to_string())
-        .send()
-        .await
-        .unwrap();
+        let url = format!("{}/metrics", api);
 
-    if response.status() != reqwest::StatusCode::OK {
-        println!(
-            "Error submitting metrics, error: {}, body: {}",
-            response.status(),
-            response.text().await.unwrap()
-        );
+        let response = match client
+            .post(&url)
+            .body(json!(metrics).to_string())
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                error = err.to_string();
+                tokio::time::sleep(duration).await;
+                continue;
+            }
+        };
+
+        if response.status() != reqwest::StatusCode::OK {
+            error = response.text().await.unwrap_or(String::new());
+            tokio::time::sleep(duration).await;
+            continue;
+        }
+
+        return Ok(());
     }
+
+    println!("Error submitting metrics after 3 attempts: {}", error);
+    Ok(())
 }
 
-async fn send_logs(logs: &Vec<LogLine>) {
-    let api =
-        std::env::var("METRICSCAT_API_URL").unwrap_or("http://localhost:8000/api".to_string());
-    let url = format!("{}/logs", api);
-    let client = reqwest::Client::new();
+async fn send_logs(logs: &Vec<LogLine>) -> reqwest::Result<()> {
+    let mut error = String::new();
 
-    let response = client
-        .post(&url)
-        .body(json!(logs).to_string())
-        .send()
-        .await
-        .unwrap();
+    for _ in 0..3 {
+        let api =
+            std::env::var("METRICSCAT_API_URL").unwrap_or("http://localhost:8000/api".to_string());
+        let url = format!("{}/logs", api);
+        let client = reqwest::Client::new();
+        let duration = tokio::time::Duration::from_millis(1_000);
 
-    if response.status() != reqwest::StatusCode::OK {
-        println!(
-            "Error submitting logs, error: {}, body: {}",
-            response.status(),
-            response.text().await.unwrap()
-        );
+        let response = match client.post(&url).body(json!(logs).to_string()).send().await {
+            Ok(response) => response,
+            Err(err) => {
+                error = err.to_string();
+                tokio::time::sleep(duration).await;
+                continue;
+            }
+        };
+
+        if response.status() != reqwest::StatusCode::OK {
+            tokio::time::sleep(duration).await;
+            error = response.text().await.unwrap_or(String::new());
+            continue;
+        }
+
+        return Ok(());
     }
+
+    println!("Error submitting logs after 3 attempts: {}", error);
+    Ok(())
 }

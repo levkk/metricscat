@@ -1139,6 +1139,7 @@ dependencies = [
  "async-std",
  "chrono",
  "gethostname",
+ "regex",
  "reqwest",
  "rocket",
  "rocket_cors",
